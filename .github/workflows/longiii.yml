@@ -1,0 +1,38 @@
+name: Scrape latest jobs
+
+on:
+  push:
+  workflow_dispatch:
+  schedule:
+    - cron: '6 12 * * *'
+
+jobs:
+  scheduled:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Check out this repo
+      uses: actions/checkout@v2
+      with:
+        fetch-depth: 0
+    - name: Fetch latest data
+      run: |-
+        curl https://relocate-with-us.github.io/db.json | jq . > jobList.json
+    - name: Add longitude and latitude
+      run: |
+        jq '.[] | .location' jobList.json | while read -r location; do
+          query=$(echo "$location" | awk '{print $1","$2}') # Extracting the first two parts of the location (e.g., "Amsterdam, Netherlands" from "Amsterdam, Netherlands 🇳🇱")
+          response=$(curl -s "https://api.openweathermap.org/geo/1.0/direct?q=$query&limit=1&appid=<YOUR_API_KEY>") # Replace <YOUR_API_KEY> with your actual API key
+          longitude=$(echo "$response" | jq -r '.[0].lon')
+          latitude=$(echo "$response" | jq -r '.[0].lat')
+          jq --arg location "$location" --arg longitude "$longitude" --arg latitude "$latitude" \
+            'map(if .location == $location then . + {longitude: $longitude, latitude: $latitude} else . end)' \
+            jobList.json > updatedJobList.json.tmp && mv updatedJobList.json.tmp jobList.json
+        done
+    - name: Commit and push if it changed
+      run: |
+        git config user.name "Automated"
+        git config user.email "actions@users.noreply.github.com"
+        git add README.md jobList.json
+        timestamp=$(date -u)
+        git commit -m "Latest jobs: ${timestamp}" || exit 0
+        git push
